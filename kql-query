@@ -1,0 +1,266 @@
+Onboarding
+| summarize sum(Score)
+
+.execute database script <|
+// Create table for the books
+.create-merge table Books(rf_id:string, book_title:string, publish_date:long, author:string, language:string, number_of_pages:long, weight_gram:long)
+// Import data for books
+// (Used data is utilzing catalogue from https://github.com/internetarchive/openlibrary )
+.ingest into table Books ('https://kustodetectiveagency.blob.core.windows.net/digitown-books/books.csv.gz') with (ignoreFirstRecord=true)
+// Create table for the shelves
+.create-merge table Shelves (shelf:long, rf_ids:dynamic, total_weight:long) 
+// Import data for shelves
+.ingest into table Shelves ('https://kustodetectiveagency.blob.core.windows.net/digitown-books/shelves.csv.gz') with (ignoreFirstRecord=true)
+
+
+Shelves
+| mv-expand rf_ids
+| extend RID = tostring(rf_ids)
+| join (Books) on $left.RID == $right.rf_id
+| summarize sum(weight_gram) by shelf, total_weight
+| extend diff = total_weight - sum_weight_gram
+| order by diff
+
+.execute database script <|
+// Ingestion may take ~40sec to complete, total 5M+ records
+.create-merge table Votes (Timestamp:datetime, vote:string, via_ip:string, voter_hash_id:string)
+.ingest async into table Votes (@'https://kustodetectiveagency.blob.core.windows.net/digitown-votes/votes_1.csv.gz')
+.ingest async into table Votes (@'https://kustodetectiveagency.blob.core.windows.net/digitown-votes/votes_2.csv.gz')
+.ingest async into table Votes (@'https://kustodetectiveagency.blob.core.windows.net/digitown-votes/votes_3.csv.gz')
+
+// Query that counts the votes:
+Votes
+// | where vote == "Gaul"
+| summarize Count = count() by bin(Timestamp, 0.1h), via_ip, vote
+| where Count < 25
+| summarize Count_s=sum(Count) by vote
+| as hint.materialized=true T
+| extend Total = toscalar(T | summarize sum(Count_s))
+| project vote, Percentage = round(Count_s*100.0 / Total,1), Count_s
+| order by Count_s
+
+
+.execute database script <|
+// Create the table with the traffic information.
+// The data loading process estimated to take ~3-4min to complete (114M+ rows of data).
+// Notes: VIN - is Vehicle ID 
+.create-merge table Traffic (Timestamp:datetime, VIN:string, Ave:int, Street:int)
+.ingest async into table Traffic (@'https://kustodetectiveagency.blob.core.windows.net/digitown-traffic/log_00000.csv.gz')
+.ingest async into table Traffic (@'https://kustodetectiveagency.blob.core.windows.net/digitown-traffic/log_00001.csv.gz')
+.ingest async into table Traffic (@'https://kustodetectiveagency.blob.core.windows.net/digitown-traffic/log_00002.csv.gz')
+
+
+
+// let a = Traffic
+// | where Timestamp between (datetime(2022-10-16 08:17:00) .. datetime(2022-10-16 08:31:00))
+// | where Ave == 157 and Street == 148
+// | project VIN;
+let b = Traffic
+| where Timestamp between (datetime(2022-10-16 08:31:00) .. datetime(2022-10-16 08:40:00))
+| where Ave == 157 and Street == 148
+| project VIN;
+let c = b
+| join Traffic on VIN
+| project Timestamp, VIN, Ave, Street;
+c
+// | join kind=leftanti a on VIN
+// | where Timestamp between (datetime(2022-10-16 08:40:00) .. datetime(2022-10-16 11:00:00))
+| summarize arg_max(Timestamp, *) by VIN
+| summarize count(VIN) by  Ave, Street
+
+
+
+
+Well done, my friend.
+It's time to meet. Let's go for a virtual sTREEt tour...
+Across the Big Apple city, there is a special place with Turkish Hazelnut and four Schubert Chokecherries within 66-meters radius area.
+Go 'out' and look for me there, near the smallest American Linden tree (within the same area).
+Find me and the bottom line: my key message to you.
+
+Cheers,
+El Puente.
+
+PS: You know what to do with the following:
+
+----------------------------------------------------------------------------------------------
+
+.execute database script <|
+// The data below is from https://data.cityofnewyork.us/Environment/2015-Street-Tree-Census-Tree-Data/uvpi-gqnh 
+// The size of the tree can be derived using 'tree_dbh' (tree diameter) column.
+.create-merge table nyc_trees 
+       (tree_id:int, block_id:int, created_at:datetime, tree_dbh:int, stump_diam:int, 
+curb_loc:string, status:string, health:string, spc_latin:string, spc_common:string, steward:string,
+guards:string, sidewalk:string, user_type:string, problems:string, root_stone:string, root_grate:string,
+root_other:string, trunk_wire:string, trnk_light:string, trnk_other:string, brch_light:string, brch_shoe:string,
+brch_other:string, address:string, postcode:int, zip_city:string, community_board:int, borocode:int, borough:string,
+cncldist:int, st_assem:int, st_senate:int, nta:string, nta_name:string, boro_ct:string, ['state']:string,
+latitude:real, longitude:real, x_sp:real, y_sp:real, council_district:int, census_tract:int, ['bin']:int, bbl:long)
+with (docstring = "2015 NYC Tree Census")
+.ingest async into table nyc_trees ('https://kustodetectiveagency.blob.core.windows.net/el-puente/1.csv.gz')
+.ingest async into table nyc_trees ('https://kustodetectiveagency.blob.core.windows.net/el-puente/2.csv.gz')
+.ingest async into table nyc_trees ('https://kustodetectiveagency.blob.core.windows.net/el-puente/3.csv.gz')
+// Get a virtual tour link with Latitude/Longitude coordinates
+.create-or-alter function with (docstring = "Virtual tour starts here", skipvalidation = "true") VirtualTourLink(lat:real, lon:real) { 
+	print Link=strcat('https://www.google.com/maps/@', lat, ',', lon, ',4a,75y,32.0h,79.0t/data=!3m7!1e1!3m5!1s-1P!2e0!5s20191101T000000!7i16384!8i8192')
+}
+// Decrypt message helper function. Usage: print Message=Decrypt(message, key)
+.create-or-alter function with 
+  (docstring = "Use this function to decrypt messages")
+  Decrypt(_message:string, _key:string) { 
+    let S = (_key:string) {let r = array_concat(range(48, 57, 1), range(65, 92, 1), range(97, 122, 1)); 
+    toscalar(print l=r, key=to_utf8(hash_sha256(_key)) | mv-expand l to typeof(int), key to typeof(int) | order by key asc | summarize make_string(make_list(l)))};
+    let cypher1 = S(tolower(_key)); let cypher2 = S(toupper(_key)); coalesce(base64_decode_tostring(translate(cypher1, cypher2, _message)), "Failure: wrong key")
+}
+
+print Message=Decrypt("20INznpGzmkmK2NlZ0JILtO4OoYhOoYUB0OrOoTl5mJ3KgXrB0[8LTSSXUYhzUY8vmkyKUYevUYrDgYNK07yaf7soC3kKgMlOtHkLt[kZEclBtkyOoYwvtJGK2YevUY[v65iLtkeLEOhvtNlBtpizoY[v65yLdOkLEOhvtNlDn5lB07lOtJIDmllzmJ4vf7soCpiLdYIK0[eK27soleqO6keDpYp2CeH5d\\F\\fN6aQT6aQL[aQcUaQc[aQ57aQ5[aQDG", "ASHES to ASHES")
+
+
+
+nyc_trees
+| extend h3cell = geo_point_to_h3cell(longitude, latitude, 10)
+| summarize  count1=countif(spc_common has 'Turkish'), count2=countif(spc_common has 'Schubert') by h3cell
+| where count1 == 1 and count2== 4
+
+nyc_trees
+| extend h3cell = geo_point_to_h3cell(longitude, latitude, 10)
+| where h3cell == '8a2a100dec9ffff' and spc_common has 'american linden'
+
+VirtualTourLink(40.71222313,-73.96452201)
+
+
+
+
+.execute database script <|
+.create-merge table ChatLogs (Timestamp:datetime, Message:string)  
+.ingest into table ChatLogs ('https://kustodetectiveagency.blob.core.windows.net/digitown-chat/log_00000.csv.gz')
+.ingest into table ChatLogs ('https://kustodetectiveagency.blob.core.windows.net/digitown-chat/log_00001.csv.gz')
+
+
+ChatLogs
+// | where Message has 'logged in from'
+// | take 1000
+| extend IP = extract("(([0-9]{1,3})\\.([0-9]{1,3})\\.([0-9]{1,3})\\.(([0-9]{1,3})))",1,Message)
+| extend User = strcat_array(split(Message, "'",1),"")
+| extend Channel = extract("[a-z0-9]+",0,strcat_array(split(Message,"channel",1), ""))
+| extend UserTakeMessage = extract("[a-z0-9]+",0,strcat_array(split(Message,"sent message to the user",1), ""))
+| extend Time = format_datetime(Timestamp, 'HH:mm')
+| summarize dcount(User) by Time, Channel
+| where dcount_User ==4
+| distinct Channel
+
+
+ChatLogs
+| where Message has "ccde50d79f5"
+| extend User = strcat_array(split(Message, "'",1),"")
+| extend Channel = extract("[a-z0-9]+",0,strcat_array(split(Message,"channel",1), ""))
+| distinct User, Channel
+| summarize count() by Channel
+
+
+let a=ChatLogs
+// | Message has 'left the channel'
+// | extend User = strcat_array(split(Message, "'",1),"")
+| extend Channel = extract("[a-z0-9]+",0,strcat_array(split(Message,"channel",1), ""))
+| where Message has 'joined the channel'
+| summarize count() by Channel
+| where count_ ==4
+| project Channel;
+let b=ChatLogs
+// | where Message has 'left the channel' 
+// | Message has 'left the channel'
+| extend User = strcat_array(split(Message, "'",1),"")
+| extend Channel = extract("[a-z0-9]+",0,strcat_array(split(Message,"channel",1), ""))
+| extend IP = extract("(([0-9]{1,3})\\.([0-9]{1,3})\\.([0-9]{1,3})\\.(([0-9]{1,3})))",1,Message)
+| where Channel in (a)
+| project User;
+ChatLogs
+| extend IP = extract("(([0-9]{1,3})\\.([0-9]{1,3})\\.([0-9]{1,3})\\.(([0-9]{1,3})))",1,Message)
+| extend User = strcat_array(split(Message, "'",1),"")
+| extend Channel = extract("[a-z0-9]+",0,strcat_array(split(Message,"channel",1), ""))
+| where User in (b)
+// | summarize count() by Channel
+// | where count_ ==4
+
+
+
+ChatLogs
+| where Message has 'logged in from'
+| extend IP = extract("(([0-9]{1,3})\\.([0-9]{1,3})\\.([0-9]{1,3})\\.(([0-9]{1,3})))",1,Message)
+| extend User = strcat_array(split(Message, "'",1),"")
+| summarize count() by IP, User
+
+
+
+let a=ChatLogs
+| extend IP = extract("(([0-9]{1,3})\\.([0-9]{1,3})\\.([0-9]{1,3})\\.(([0-9]{1,3})))",1,Message)
+| extend User = strcat_array(split(Message, "'",1),"")
+| extend Channel = extract("[a-z0-9]+",0,strcat_array(split(Message,"channel",1), ""))
+// | project IP
+| where IP != ""
+| distinct User, IP, Channel;
+let b=ChatLogs
+// | extend IP = extract("(([0-9]{1,3})\\.([0-9]{1,3})\\.([0-9]{1,3})\\.(([0-9]{1,3})))",1,Message)
+| extend User = strcat_array(split(Message, "'",1),"")
+| extend Channel = extract("[a-z0-9]+",0,strcat_array(split(Message,"channel",1), ""))
+| where User in (a)
+| distinct User, Channel
+| summarize count() by Channel
+| where count_ == 4
+| distinct Channel;
+ChatLogs
+// | where Message has 'logged in from'
+// | take 1000
+| extend IP = extract("(([0-9]{1,3})\\.([0-9]{1,3})\\.([0-9]{1,3})\\.(([0-9]{1,3})))",1,Message)
+| extend User = strcat_array(split(Message, "'",1),"")
+| extend Channel = extract("[a-z0-9]+",0,strcat_array(split(Message,"channel",1), ""))
+| extend UserTakeMessage = extract("[a-z0-9]+",0,strcat_array(split(Message,"sent message to the user",1), ""))
+| extend Time = format_datetime(Timestamp, 'HH:mm')
+| summarize dcount(User) by Time, Channel
+| where dcount_User ==4
+| distinct Channel
+| join b on Channel
+
+
+ChatLogs
+| where Message has "uaf9f4fef17"
+
+
+u8819ece9b0
+uab8088061c
+uf034c98df3
+uaf9f4fef17
+
+
+
+let ReadMessage = (Message:string, Key:string) 
+{
+    let m = Message; let K = Key; let l = toscalar(print s = split(split(K,':')[1], ',') | mv-expand s | summarize make_list(tolong(s)));
+    let ma = (i1:long, i2:long) { make_string(repeat(tolong(l[i1])-tolong(l[i2]), 1))}; 
+    let ms = (d:dynamic, s:long, e:long) { make_string(array_slice(d, s, e)) };   
+    let mc = m has '...';
+    print s=split(split(replace_regex(m, @'[\s\?]+', ' '),substring(K,9,3))[1], ' ')
+    | mv-expand with_itemindex=r s to typeof(string) | serialize 
+    | where r in (l)
+    | extend s = iif(r-1 == prev(r), replace_string(strcat(prev(s), s),'o','ou'), s)
+    | where (r+1 != next(r))
+    | summarize s=strcat_array(make_list(s), iff(mc, '+%2B', ' '))
+    | extend k = series_subtract(series_add(to_utf8(K), l), repeat(23, 10))
+    | project result=iif(mc, strcat(ms(k,0,3), ma(8,2), ms(k,4,6), ms(l,8,8), ms(k,7,7), ma(8,0), s), s)
+};
+ReadMessage(
+```
+Hi there! How are you?
+
+PS: 
+Feeling uncomfortable and wondering about an elephant in the room: why would I help you?
+Nothing escapes you, ha?
+Let’s put it this way: we live in a circus full of competition. I can use some of your help, and nothing breaks if you use mine... You see, everything is about symbiosis.
+Anyway, what do you have to lose? Look on an illustrated past, fast forward N days and realize the future is here.
+```,
+'wytaPUJM!PS:2,7,17,29,42,49,58,59,63'
+)
+
+print 1891%1000
+
+let _date = datetime("2020-07-09");
+print _date + 891d
